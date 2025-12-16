@@ -1,6 +1,6 @@
 import { DefaultAzureCredential, getBearerTokenProvider } from '@azure/identity';
-import { 
-    SearchIndexClient, 
+import {
+    SearchIndexClient,
     SearchClient,
     SearchIndex,
     SearchField,
@@ -29,9 +29,10 @@ const config = {
     azureOpenAIEmbeddingDeployment: process.env.AZURE_OPENAI_EMBEDDING_DEPLOYMENT!,
     azureOpenAIEmbeddingModel: process.env.AZURE_OPENAI_EMBEDDING_DEPLOYMENT!,
     azureOpenAIEmbeddingApiVersion: process.env.EMBEDDING_API_VERSION!,
-    indexName: "earth_at_night",
-    agentName: "earth-search-agent",
-    searchApiVersion: "2025-05-01-Preview"
+    indexName: 'earth_at_night',
+    knowledgeSourceName: 'earth-knowledge-source',
+    knowledgeBaseName: 'earth-knowledge-base',
+    searchApiVersion: "2025-11-01-preview"
 };
 
 // Earth at Night document interface
@@ -84,36 +85,42 @@ interface AgenticRetrievalResponse {
     [key: string]: any;
 }
 
-async function prepareDocuments(uploadDocs: boolean): Promise<{
+async function prepareSearchService(uploadDocs: boolean): Promise<{
     searchIndexClient: SearchIndexClient;
     credential: DefaultAzureCredential;
     openAIClient: AzureOpenAI;
 }> {
-        // Initialize Azure credentials using managed identity (recommended)
-        const credential = new DefaultAzureCredential();
+    // Initialize Azure credentials using managed identity (recommended)
+    const credential = new DefaultAzureCredential();
 
-        // Create search clients
-        const searchIndexClient = new SearchIndexClient(config.searchEndpoint, credential);
-        const searchClient = new SearchClient<EarthAtNightDocument>(config.searchEndpoint, config.indexName, credential);
+    // Create search clients
+    const searchIndexClient = new SearchIndexClient(config.searchEndpoint, credential);
+    const searchClient = new SearchClient<EarthAtNightDocument>(config.searchEndpoint, config.indexName, credential);
 
-        // Create Azure OpenAI client
-        const scope = "https://cognitiveservices.azure.com/.default";
-        const azureADTokenProvider = getBearerTokenProvider(credential, scope);
-        const openAIClient = new AzureOpenAI({
-            endpoint: config.azureOpenAIEndpoint,
-            apiVersion: config.azureOpenAIApiVersion,
-            azureADTokenProvider,
-        });
+    // Create Azure OpenAI client
+    const scope = "https://cognitiveservices.azure.com/.default";
+    const azureADTokenProvider = getBearerTokenProvider(credential, scope);
+    const openAIClient = new AzureOpenAI({
+        endpoint: config.azureOpenAIEndpoint,
+        apiVersion: config.azureOpenAIApiVersion,
+        azureADTokenProvider,
+    });
 
-        if (uploadDocs) {
+    if (uploadDocs) {
         // Create search index with vector and semantic capabilities
         await createSearchIndex(searchIndexClient);
 
-            // Upload sample documents
-            await uploadDocuments(searchClient);
-        }
+        // Upload sample documents
+        await uploadDocuments(searchClient);
+    } else {
+        console.log("⏭️ Skipping document upload (UPLOAD_DOCS=false)");
+    }
 
-        return { searchIndexClient, credential, openAIClient } ;
+    // Create knowledge source and knowledge base for agentic retrieval
+    await createKnowledgeSource(credential);
+    await createKnowledgeBase(credential);
+
+    return { searchIndexClient, credential, openAIClient };
 }
 
 
@@ -121,17 +128,16 @@ async function main(): Promise<void> {
     try {
         console.log("🚀 Starting Azure AI Search agentic retrieval quickstart...\n");
 
-        const { searchIndexClient, credential, openAIClient } = await prepareDocuments(process.env.UPLOAD_DOCS === 'false' || true);
+        const uploadDocs = process.env.UPLOAD_DOCS !== 'false';
+        const cleanupResources = process.env.CLEANUP_RESOURCES !== 'false';
 
-        // Create knowledge agent for agentic retrieval
-        await createKnowledgeAgent(credential);
+        const { searchIndexClient, credential, openAIClient } = await prepareSearchService(uploadDocs);
 
         // Run agentic retrieval with conversation
         await runAgenticRetrieval(credential, openAIClient);
 
-        // Clean up - Delete knowledge agent and search index
-        await deleteKnowledgeAgent(credential);
-        await deleteSearchIndex(searchIndexClient);
+        // Clean up resources based on env var
+        await cleanupAllResources(searchIndexClient, credential, cleanupResources);
 
         console.log("✅ Quickstart completed successfully!");
 
@@ -289,7 +295,7 @@ async function fetchEarthAtNightDocuments(): Promise<EarthAtNightDocument[]> {
                 page_number: 1
             },
             {
-                id: "2", 
+                id: "2",
                 page_chunk: "From space, the aurora borealis appears as shimmering curtains of green and blue light dancing across the polar regions.",
                 page_embedding_text_3_large: new Array(3072).fill(0.2),
                 page_number: 2
@@ -320,16 +326,68 @@ async function uploadDocuments(searchClient: SearchClient<EarthAtNightDocument>)
     }
 }
 
-async function createKnowledgeAgent(credential: DefaultAzureCredential): Promise<void> {
+async function createKnowledgeSource(credential: DefaultAzureCredential): Promise<void> {
+    console.log("📚 Creating or getting knowledge source...");
 
-    // In case the agent already exists, delete it first
-    await deleteKnowledgeAgent(credential);
+    try {
+        const token = await getAccessToken(credential, "https://search.azure.com/.default");
+        
+        // Check if knowledge source already exists
+        const getResponse = await fetch(`${config.searchEndpoint}/knowledgesources/${config.knowledgeSourceName}?api-version=${config.searchApiVersion}`, {
+            method: 'GET',
+            headers: {
+                'Authorization': `Bearer ${token}`
+            }
+        });
 
-    console.log("🤖 Creating knowledge agent...");
+        if (getResponse.ok) {
+            console.log(`ℹ️ Knowledge source '${config.knowledgeSourceName}' already exists. Using existing resource.`);
+            return;
+        }
 
-    const agentDefinition = {
-        name: config.agentName,
-        description: "Knowledge agent for Earth at Night e-book content",
+        // Create new knowledge source if it doesn't exist
+        const knowledgeSourceDefinition = {
+            name: config.knowledgeSourceName,
+            description: "Knowledge source for Earth at Night e-book content",
+            kind: "searchIndex",
+            searchIndexParameters: {
+                searchIndexName: config.indexName
+            }
+        };
+
+        const response = await fetch(`${config.searchEndpoint}/knowledgesources?api-version=${config.searchApiVersion}`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${token}`
+            },
+            body: JSON.stringify(knowledgeSourceDefinition)
+        });
+
+        if (!response.ok) {
+            const errorText = await response.text();
+            throw new Error(`Failed to create knowledge source: ${response.status} ${response.statusText}\n${errorText}`);
+        }
+
+        console.log(`✅ Knowledge source '${config.knowledgeSourceName}' created successfully.`);
+
+    } catch (error) {
+        console.error("❌ Error creating knowledge source:", error);
+        throw error;
+    }
+}
+
+// Function to create knowledge base
+async function createKnowledgeBase(credential: DefaultAzureCredential): Promise<void> {
+    console.log("🗄️ Creating or updating knowledge base...");
+
+    const knowledgeBaseDefinition = {
+        name: config.knowledgeBaseName,
+        knowledgeSources: [
+            {
+                name: config.knowledgeSourceName
+            }
+        ],
         models: [
             {
                 kind: "azureOpenAI",
@@ -340,34 +398,45 @@ async function createKnowledgeAgent(credential: DefaultAzureCredential): Promise
                 }
             }
         ],
-        targetIndexes: [
-            {
-                indexName: config.indexName,
-                defaultRerankerThreshold: 2.5
-            }
-        ]
+        outputMode: "answerSynthesis",
+        answerInstructions: "Provide a two sentence concise and informative answer based on the retrieved documents."
     };
 
     try {
         const token = await getAccessToken(credential, "https://search.azure.com/.default");
-        const response = await fetch(`${config.searchEndpoint}/agents/${config.agentName}?api-version=${config.searchApiVersion}`, {
+        
+        // PUT creates or updates - check if it exists first for better logging
+        const getResponse = await fetch(`${config.searchEndpoint}/knowledgebases/${config.knowledgeBaseName}?api-version=${config.searchApiVersion}`, {
+            method: 'GET',
+            headers: {
+                'Authorization': `Bearer ${token}`
+            }
+        });
+
+        const exists = getResponse.ok;
+        
+        const response = await fetch(`${config.searchEndpoint}/knowledgebases/${config.knowledgeBaseName}?api-version=${config.searchApiVersion}`, {
             method: 'PUT',
             headers: {
                 'Content-Type': 'application/json',
                 'Authorization': `Bearer ${token}`
             },
-            body: JSON.stringify(agentDefinition)
+            body: JSON.stringify(knowledgeBaseDefinition)
         });
 
         if (!response.ok) {
             const errorText = await response.text();
-            throw new Error(`Failed to create knowledge agent: ${response.status} ${response.statusText}\n${errorText}`);
+            throw new Error(`Failed to create knowledge base: ${response.status} ${response.statusText}\n${errorText}`);
         }
 
-        console.log(`✅ Knowledge agent '${config.agentName}' created successfully.`);
+        if (exists) {
+            console.log(`✅ Knowledge base '${config.knowledgeBaseName}' updated successfully.`);
+        } else {
+            console.log(`✅ Knowledge base '${config.knowledgeBaseName}' created successfully.`);
+        }
 
     } catch (error) {
-        console.error("❌ Error creating knowledge agent:", error);
+        console.error("❌ Error creating knowledge base:", error);
         throw error;
     }
 }
@@ -473,7 +542,7 @@ async function generateFinalAnswer(
 }
 
 async function callAgenticRetrieval(
-    credential: DefaultAzureCredential, 
+    credential: DefaultAzureCredential,
     messages: KnowledgeAgentMessage[]
 ): Promise<AgenticRetrievalResponse> {
 
@@ -490,19 +559,23 @@ async function callAgenticRetrieval(
 
     const retrievalRequest = {
         messages: agentMessages,
-        targetIndexParams: [
+        knowledgeSourceParams: [
             {
-                indexName: config.indexName,
-                rerankerThreshold: 2.5,
-                maxDocsForReranker: 100,
-                includeReferenceSourceData: true
+                knowledgeSourceName: config.knowledgeSourceName,
+                kind: "searchIndex",
+                includeReferences: true,
+                includeReferenceSourceData: true,
+                alwaysQuerySource: true,
+                rerankerThreshold: 2.5
             }
-        ]
+        ],
+        includeActivity: true,
+        retrievalReasoningEffort: { kind: "low" }
     };
 
     const token = await getAccessToken(credential, "https://search.azure.com/.default");
     const response = await fetch(
-        `${config.searchEndpoint}/agents/${config.agentName}/retrieve?api-version=${config.searchApiVersion}`,
+        `${config.searchEndpoint}/knowledgebases/${config.knowledgeBaseName}/retrieve?api-version=${config.searchApiVersion}`,
         {
             method: 'POST',
             headers: {
@@ -521,12 +594,30 @@ async function callAgenticRetrieval(
     return await response.json() as AgenticRetrievalResponse;
 }
 
-async function deleteKnowledgeAgent(credential: DefaultAzureCredential): Promise<void> {
-    console.log("🗑️ Deleting knowledge agent...");
+async function cleanupAllResources(
+    searchIndexClient: SearchIndexClient,
+    credential: DefaultAzureCredential,
+    cleanup: boolean
+): Promise<void> {
+    if (!cleanup) {
+        console.log("⏭️ Skipping resource cleanup (CLEANUP_RESOURCES=false)");
+        return;
+    }
+
+    console.log("\n🧹 Cleaning up resources...");
+
+    // Delete in reverse order of creation
+    await deleteKnowledgeBase(credential);
+    await deleteKnowledgeSource(credential);
+    await deleteSearchIndex(searchIndexClient);
+}
+
+async function deleteKnowledgeBase(credential: DefaultAzureCredential): Promise<void> {
+    console.log("🗑️ Deleting knowledge base...");
 
     try {
         const token = await getAccessToken(credential, "https://search.azure.com/.default");
-        const response = await fetch(`${config.searchEndpoint}/agents/${config.agentName}?api-version=${config.searchApiVersion}`, {
+        const response = await fetch(`${config.searchEndpoint}/knowledgebases/${config.knowledgeBaseName}?api-version=${config.searchApiVersion}`, {
             method: 'DELETE',
             headers: {
                 'Authorization': `Bearer ${token}`
@@ -535,17 +626,46 @@ async function deleteKnowledgeAgent(credential: DefaultAzureCredential): Promise
 
         if (!response.ok) {
             if (response.status === 404) {
-                console.log(`ℹ️ Knowledge agent '${config.agentName}' does not exist or was already deleted.`);
+                console.log(`ℹ️ Knowledge base '${config.knowledgeBaseName}' does not exist or was already deleted.`);
                 return;
             }
             const errorText = await response.text();
-            throw new Error(`Failed to delete knowledge agent: ${response.status} ${response.statusText}\n${errorText}`);
+            throw new Error(`Failed to delete knowledge base: ${response.status} ${response.statusText}\n${errorText}`);
         }
 
-        console.log(`✅ Knowledge agent '${config.agentName}' deleted successfully.`);
+        console.log(`✅ Knowledge base '${config.knowledgeBaseName}' deleted successfully.`);
 
     } catch (error) {
-        console.error("❌ Error deleting knowledge agent:", error);
+        console.error("❌ Error deleting knowledge base:", error);
+        throw error;
+    }
+}
+
+async function deleteKnowledgeSource(credential: DefaultAzureCredential): Promise<void> {
+    console.log("🗑️ Deleting knowledge source...");
+
+    try {
+        const token = await getAccessToken(credential, "https://search.azure.com/.default");
+        const response = await fetch(`${config.searchEndpoint}/knowledgesources/${config.knowledgeSourceName}?api-version=${config.searchApiVersion}`, {
+            method: 'DELETE',
+            headers: {
+                'Authorization': `Bearer ${token}`
+            }
+        });
+
+        if (!response.ok) {
+            if (response.status === 404) {
+                console.log(`ℹ️ Knowledge source '${config.knowledgeSourceName}' does not exist or was already deleted.`);
+                return;
+            }
+            const errorText = await response.text();
+            throw new Error(`Failed to delete knowledge source: ${response.status} ${response.statusText}\n${errorText}`);
+        }
+
+        console.log(`✅ Knowledge source '${config.knowledgeSourceName}' deleted successfully.`);
+
+    } catch (error) {
+        console.error("❌ Error deleting knowledge source:", error);
         throw error;
     }
 }
@@ -558,7 +678,7 @@ async function continueConversation(
     console.log("\n💬 === Continuing Conversation ===");
 
     // Add follow-up question
-    const followUpQuestion = "How do I find lava at night?"; 
+    const followUpQuestion = "How do I find lava at night?";
     console.log(`❓ Follow-up question: ${followUpQuestion}`);
 
     messages.push({
@@ -641,8 +761,10 @@ export {
     deleteSearchIndex,
     fetchEarthAtNightDocuments,
     uploadDocuments,
-    createKnowledgeAgent,
-    deleteKnowledgeAgent,
+    createKnowledgeSource,
+    createKnowledgeBase,
+    deleteKnowledgeBase,
+    deleteKnowledgeSource,
     runAgenticRetrieval,
     EarthAtNightDocument,
     KnowledgeAgentMessage,
