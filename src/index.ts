@@ -1,4 +1,4 @@
-import { DefaultAzureCredential, getBearerTokenProvider } from '@azure/identity';
+import { DefaultAzureCredential } from '@azure/identity';
 import {
     SearchIndexClient,
     SearchClient,
@@ -14,7 +14,6 @@ import {
     SemanticPrioritizedFields,
     SemanticField
 } from '@azure/search-documents';
-import { AzureOpenAI } from "openai/index.mjs";
 
 // Configuration - Update these values for your environment
 const config = {
@@ -34,83 +33,17 @@ const config = {
     cleanupResources: process.env.CLEANUP_RESOURCES !== 'false'
 };
 
-interface EarthAtNightDocument {
-    id: string;
-    page_chunk: string;
-    page_embedding_text_3_large: number[];
-    page_number: number;
-}
-
-interface KnowledgeAgentMessage {
-    role: 'user' | 'assistant' | 'system';
-    content: string;
-}
-
-interface AgenticRetrievalResponse {
-    response?: string | any[];
-    references?: Array<{[key: string]: any}>;
-    activity?: Array<{[key: string]: any}>;
-    [key: string]: any;
-}
-
-function extractAssistantContent(response: string | any[] | undefined): string {
-    if (typeof response === 'string') return response;
-    if (Array.isArray(response)) return JSON.stringify(response);
-    return '';
-}
-
-function printFormattedAnswer(content: string): void {
-    console.log("\n📝 ANSWER:");
-    console.log("─".repeat(80));
+async function main(): Promise<void> {
     try {
-        const parsed = JSON.parse(content);
-        if (Array.isArray(parsed) && parsed[0]?.content?.[0]?.text) {
-            console.log(parsed[0].content[0].text);
-        } else {
-            console.log(content);
-        }
-    } catch {
-        console.log(content);
+        console.log("🚀 Starting Azure AI Search agentic retrieval quickstart...\n");
+        const { searchIndexClient, credential } = await prepareSearchService(config.uploadDocs);
+        await runAgenticRetrieval(credential);
+        await cleanupAllResources(searchIndexClient, credential, config.cleanupResources);
+        console.log("✅ Quickstart completed successfully!");
+    } catch (error) {
+        console.error("❌ Error in main execution:", error);
+        throw error;
     }
-    console.log("─".repeat(80));
-}
-
-function printActivities(response: AgenticRetrievalResponse): void {
-    console.log("\nActivities:");
-    if (response.activity && Array.isArray(response.activity)) {
-        response.activity.forEach((activity) => {
-            const activityType = activity.activityType || activity.type || 'UnknownActivityRecord';
-            console.log(`Activity Type: ${activityType}`);
-            console.log(JSON.stringify(activity, null, 2));
-        });
-    }
-}
-
-function printReferences(response: AgenticRetrievalResponse): void {
-    console.log("Results");
-    if (response.references && Array.isArray(response.references)) {
-        response.references.forEach((reference) => {
-            const referenceType = reference.referenceType || reference.type || 'AzureSearchDoc';
-            console.log(`Reference Type: ${referenceType}`);
-            console.log(JSON.stringify(reference, null, 2));
-        });
-    }
-}
-
-async function handleDeleteResponse(
-    response: Response,
-    resourceName: string,
-    resourceType: string
-): Promise<void> {
-    if (!response.ok) {
-        if (response.status === 404) {
-            console.log(`ℹ️ ${resourceType} '${resourceName}' does not exist or was already deleted.`);
-            return;
-        }
-        const errorText = await response.text();
-        throw new Error(`Failed to delete ${resourceType}: ${response.status} ${response.statusText}\n${errorText}`);
-    }
-    console.log(`✅ ${resourceType} '${resourceName}' deleted successfully.`);
 }
 
 async function prepareSearchService(uploadDocs: boolean): Promise<{
@@ -132,20 +65,6 @@ async function prepareSearchService(uploadDocs: boolean): Promise<{
     await createKnowledgeBase(credential);
     return { searchIndexClient, credential };
 }
-
-async function main(): Promise<void> {
-    try {
-        console.log("🚀 Starting Azure AI Search agentic retrieval quickstart...\n");
-        const { searchIndexClient, credential } = await prepareSearchService(config.uploadDocs);
-        await runAgenticRetrieval(credential);
-        await cleanupAllResources(searchIndexClient, credential, config.cleanupResources);
-        console.log("✅ Quickstart completed successfully!");
-    } catch (error) {
-        console.error("❌ Error in main execution:", error);
-        throw error;
-    }
-}
-
 async function createSearchIndex(indexClient: SearchIndexClient): Promise<void> {
     console.log("📊 Creating search index...");
 
@@ -232,22 +151,6 @@ async function createSearchIndex(indexClient: SearchIndexClient): Promise<void> 
         console.log(`✅ Index '${config.indexName}' created or updated successfully.`);
     } catch (error) {
         console.error("❌ Error creating index:", error);
-        throw error;
-    }
-}
-
-async function deleteSearchIndex(indexClient: SearchIndexClient): Promise<void> {
-    console.log("🗑️ Deleting search index...");
-
-    try {
-        await indexClient.deleteIndex(config.indexName);
-        console.log(`✅ Search index '${config.indexName}' deleted successfully.`);
-    } catch (error: any) {
-        if (error?.statusCode === 404 || error?.code === 'IndexNotFound') {
-            console.log(`ℹ️ Search index '${config.indexName}' does not exist or was already deleted.`);
-            return;
-        }
-        console.error("❌ Error deleting search index:", error);
         throw error;
     }
 }
@@ -421,7 +324,7 @@ If you do not have the answer, respond with "I don't know".`
 
     try {
         const userMessages = messages.filter(m => m.role !== "system");
-        const retrievalResponse = await callAgenticRetrieval(credential, userMessages);
+        const retrievalResponse = await retrieveKnowledgeBaseAnswer(credential, userMessages);
         const assistantContent = extractAssistantContent(retrievalResponse.response);
         messages.push({ role: "assistant", content: assistantContent });
         printFormattedAnswer(assistantContent);
@@ -435,7 +338,7 @@ If you do not have the answer, respond with "I don't know".`
     }
 }
 
-async function callAgenticRetrieval(
+async function retrieveKnowledgeBaseAnswer(
     credential: DefaultAzureCredential,
     messages: KnowledgeAgentMessage[]
 ): Promise<AgenticRetrievalResponse> {
@@ -481,6 +384,30 @@ async function callAgenticRetrieval(
     return await response.json() as AgenticRetrievalResponse;
 }
 
+async function continueConversation(
+    credential: DefaultAzureCredential,
+    messages: KnowledgeAgentMessage[]
+): Promise<void> {
+    console.log("\n💬 === Continuing Conversation ===");
+    const followUpQuestion = "How do I find lava at night?";
+    console.log(`❓ Follow-up question: ${followUpQuestion}`);
+    messages.push({ role: "user", content: followUpQuestion });
+    try {
+        const userAssistantMessages = messages.filter((m: KnowledgeAgentMessage) => m.role !== "system");
+        const newRetrievalResponse = await retrieveKnowledgeBaseAnswer(credential, userAssistantMessages);
+        const assistantContent = extractAssistantContent(newRetrievalResponse.response);
+        messages.push({ role: "assistant", content: assistantContent });
+        printFormattedAnswer(assistantContent);
+        printActivities(newRetrievalResponse);
+        printReferences(newRetrievalResponse);
+        console.log("\n🎉 === Conversation Complete ===");
+
+    } catch (error) {
+        console.error("❌ Error in conversation continuation:", error);
+        throw error;
+    }
+}
+
 async function cleanupAllResources(
     searchIndexClient: SearchIndexClient,
     credential: DefaultAzureCredential,
@@ -494,6 +421,22 @@ async function cleanupAllResources(
     await deleteKnowledgeBase(credential);
     await deleteKnowledgeSource(credential);
     await deleteSearchIndex(searchIndexClient);
+}
+
+async function deleteSearchIndex(indexClient: SearchIndexClient): Promise<void> {
+    console.log("🗑️ Deleting search index...");
+
+    try {
+        await indexClient.deleteIndex(config.indexName);
+        console.log(`✅ Search index '${config.indexName}' deleted successfully.`);
+    } catch (error: any) {
+        if (error?.statusCode === 404 || error?.code === 'IndexNotFound') {
+            console.log(`ℹ️ Search index '${config.indexName}' does not exist or was already deleted.`);
+            return;
+        }
+        console.error("❌ Error deleting search index:", error);
+        throw error;
+    }
 }
 
 async function deleteKnowledgeBase(credential: DefaultAzureCredential): Promise<void> {
@@ -526,56 +469,89 @@ async function deleteKnowledgeSource(credential: DefaultAzureCredential): Promis
     }
 }
 
-async function continueConversation(
-    credential: DefaultAzureCredential,
-    messages: KnowledgeAgentMessage[]
-): Promise<void> {
-    console.log("\n💬 === Continuing Conversation ===");
-    const followUpQuestion = "How do I find lava at night?";
-    console.log(`❓ Follow-up question: ${followUpQuestion}`);
-    messages.push({ role: "user", content: followUpQuestion });
-    try {
-        const userAssistantMessages = messages.filter((m: KnowledgeAgentMessage) => m.role !== "system");
-        const newRetrievalResponse = await callAgenticRetrieval(credential, userAssistantMessages);
-        const assistantContent = extractAssistantContent(newRetrievalResponse.response);
-        messages.push({ role: "assistant", content: assistantContent });
-        printFormattedAnswer(assistantContent);
-        printActivities(newRetrievalResponse);
-        printReferences(newRetrievalResponse);
-        console.log("\n🎉 === Conversation Complete ===");
-
-    } catch (error) {
-        console.error("❌ Error in conversation continuation:", error);
-        throw error;
-    }
-}
-
 async function getAccessToken(credential: DefaultAzureCredential, scope: string): Promise<string> {
     const tokenResponse = await credential.getToken(scope);
     return tokenResponse.token;
 }
 
-(async () => {
-    try {
-        await main();
-    } catch (error) {
-        console.error("💥 Application failed:", error);
-        process.exit(1);
-    }
-})();
+function extractAssistantContent(response: string | any[] | undefined): string {
+    if (typeof response === 'string') return response;
+    if (Array.isArray(response)) return JSON.stringify(response);
+    return '';
+}
 
-export {
-    main,
-    createSearchIndex,
-    deleteSearchIndex,
-    fetchEarthAtNightDocuments,
-    uploadDocuments,
-    createKnowledgeSource,
-    createKnowledgeBase,
-    deleteKnowledgeBase,
-    deleteKnowledgeSource,
-    runAgenticRetrieval,
-    EarthAtNightDocument,
-    KnowledgeAgentMessage,
-    AgenticRetrievalResponse
-};
+function printFormattedAnswer(content: string): void {
+    console.log("\n📝 ANSWER:");
+    console.log("─".repeat(80));
+    try {
+        const parsed = JSON.parse(content);
+        if (Array.isArray(parsed) && parsed[0]?.content?.[0]?.text) {
+            console.log(parsed[0].content[0].text);
+        } else {
+            console.log(content);
+        }
+    } catch {
+        console.log(content);
+    }
+    console.log("─".repeat(80));
+}
+
+function printActivities(response: AgenticRetrievalResponse): void {
+    console.log("\nActivities:");
+    if (response.activity && Array.isArray(response.activity)) {
+        response.activity.forEach((activity) => {
+            const activityType = activity.activityType || activity.type || 'UnknownActivityRecord';
+            console.log(`Activity Type: ${activityType}`);
+            console.log(JSON.stringify(activity, null, 2));
+        });
+    }
+}
+
+function printReferences(response: AgenticRetrievalResponse): void {
+    console.log("Results");
+    if (response.references && Array.isArray(response.references)) {
+        response.references.forEach((reference) => {
+            const referenceType = reference.referenceType || reference.type || 'AzureSearchDoc';
+            console.log(`Reference Type: ${referenceType}`);
+            console.log(JSON.stringify(reference, null, 2));
+        });
+    }
+}
+
+async function handleDeleteResponse(
+    response: Response,
+    resourceName: string,
+    resourceType: string
+): Promise<void> {
+    if (!response.ok) {
+        if (response.status === 404) {
+            console.log(`ℹ️ ${resourceType} '${resourceName}' does not exist or was already deleted.`);
+            return;
+        }
+        const errorText = await response.text();
+        throw new Error(`Failed to delete ${resourceType}: ${response.status} ${response.statusText}\n${errorText}`);
+    }
+    console.log(`✅ ${resourceType} '${resourceName}' deleted successfully.`);
+}
+interface EarthAtNightDocument {
+    id: string;
+    page_chunk: string;
+    page_embedding_text_3_large: number[];
+    page_number: number;
+}
+
+interface KnowledgeAgentMessage {
+    role: 'user' | 'assistant' | 'system';
+    content: string;
+}
+
+interface AgenticRetrievalResponse {
+    response?: string | any[];
+    references?: Array<{[key: string]: any}>;
+    activity?: Array<{[key: string]: any}>;
+    [key: string]: any;
+}
+main().catch((error) => {
+    console.error("💥 Application failed:", error);
+    process.exit(1);
+});
