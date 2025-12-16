@@ -16,9 +16,6 @@ import {
 } from '@azure/search-documents';
 import { AzureOpenAI } from "openai/index.mjs";
 
-
-console.log(process.env);
-
 // Configuration - Update these values for your environment
 const config = {
     searchEndpoint: process.env.AZURE_SEARCH_ENDPOINT!,
@@ -32,7 +29,9 @@ const config = {
     indexName: 'earth_at_night',
     knowledgeSourceName: 'earth-knowledge-source',
     knowledgeBaseName: 'earth-knowledge-base',
-    searchApiVersion: "2025-11-01-preview"
+    searchApiVersion: "2025-11-01-preview",
+    uploadDocs: process.env.UPLOAD_DOCS !== 'false',
+    cleanupResources: process.env.CLEANUP_RESOURCES !== 'false'
 };
 
 // Earth at Night document interface
@@ -85,6 +84,74 @@ interface AgenticRetrievalResponse {
     [key: string]: any;
 }
 
+// Helper function to extract assistant content from retrieval response
+function extractAssistantContent(response: string | any[] | undefined): string {
+    if (typeof response === 'string') {
+        return response;
+    } else if (Array.isArray(response)) {
+        return JSON.stringify(response);
+    }
+    return '';
+}
+
+// Helper function to print formatted answer
+function printFormattedAnswer(content: string): void {
+    console.log("\n📝 ANSWER:");
+    console.log("─".repeat(80));
+    try {
+        const parsed = JSON.parse(content);
+        if (Array.isArray(parsed) && parsed[0]?.content?.[0]?.text) {
+            console.log(parsed[0].content[0].text);
+        } else {
+            console.log(content);
+        }
+    } catch {
+        console.log(content);
+    }
+    console.log("─".repeat(80));
+}
+
+// Helper function to print activities
+function printActivities(response: AgenticRetrievalResponse): void {
+    console.log("\nActivities:");
+    if (response.activity && Array.isArray(response.activity)) {
+        response.activity.forEach((activity) => {
+            const activityType = activity.activityType || activity.type || 'UnknownActivityRecord';
+            console.log(`Activity Type: ${activityType}`);
+            console.log(JSON.stringify(activity, null, 2));
+        });
+    }
+}
+
+// Helper function to print references
+function printReferences(response: AgenticRetrievalResponse): void {
+    console.log("Results");
+    if (response.references && Array.isArray(response.references)) {
+        response.references.forEach((reference) => {
+            const referenceType = reference.referenceType || reference.type || 'AzureSearchDoc';
+            console.log(`Reference Type: ${referenceType}`);
+            console.log(JSON.stringify(reference, null, 2));
+        });
+    }
+}
+
+// Helper function to handle delete responses with 404 handling
+async function handleDeleteResponse(
+    response: Response,
+    resourceName: string,
+    resourceType: string
+): Promise<void> {
+    if (!response.ok) {
+        if (response.status === 404) {
+            console.log(`ℹ️ ${resourceType} '${resourceName}' does not exist or was already deleted.`);
+            return;
+        }
+        const errorText = await response.text();
+        throw new Error(`Failed to delete ${resourceType}: ${response.status} ${response.statusText}\n${errorText}`);
+    }
+    console.log(`✅ ${resourceType} '${resourceName}' deleted successfully.`);
+}
+
 async function prepareSearchService(uploadDocs: boolean): Promise<{
     searchIndexClient: SearchIndexClient;
     credential: DefaultAzureCredential;
@@ -128,16 +195,13 @@ async function main(): Promise<void> {
     try {
         console.log("🚀 Starting Azure AI Search agentic retrieval quickstart...\n");
 
-        const uploadDocs = process.env.UPLOAD_DOCS !== 'false';
-        const cleanupResources = process.env.CLEANUP_RESOURCES !== 'false';
-
-        const { searchIndexClient, credential, openAIClient } = await prepareSearchService(uploadDocs);
+        const { searchIndexClient, credential, openAIClient } = await prepareSearchService(config.uploadDocs);
 
         // Run agentic retrieval with conversation
         await runAgenticRetrieval(credential, openAIClient);
 
         // Clean up resources based on env var
-        await cleanupAllResources(searchIndexClient, credential, cleanupResources);
+        await cleanupAllResources(searchIndexClient, credential, config.cleanupResources);
 
         console.log("✅ Quickstart completed successfully!");
 
@@ -463,12 +527,7 @@ If you do not have the answer, respond with "I don't know".`
         const retrievalResponse = await callAgenticRetrieval(credential, userMessages);
 
         // Extract the assistant response from agentic retrieval
-        let assistantContent = '';
-        if (typeof retrievalResponse.response === 'string') {
-            assistantContent = retrievalResponse.response;
-        } else if (Array.isArray(retrievalResponse.response)) {
-            assistantContent = JSON.stringify(retrievalResponse.response);
-        }
+        const assistantContent = extractAssistantContent(retrievalResponse.response);
 
         // Add assistant response to conversation history
         messages.push({
@@ -477,38 +536,11 @@ If you do not have the answer, respond with "I don't know".`
         });
 
         // Print answer in a more readable format
-        console.log("\n📝 ANSWER:");
-        console.log("─".repeat(80));
-        try {
-            const parsed = JSON.parse(assistantContent);
-            if (Array.isArray(parsed) && parsed[0]?.content?.[0]?.text) {
-                console.log(parsed[0].content[0].text);
-            } else {
-                console.log(assistantContent);
-            }
-        } catch {
-            console.log(assistantContent);
-        }
-        console.log("─".repeat(80));
+        printFormattedAnswer(assistantContent);
 
-        // Log activities and results...
-        console.log("\nActivities:");
-        if (retrievalResponse.activity && Array.isArray(retrievalResponse.activity)) {
-            retrievalResponse.activity.forEach((activity) => {
-                const activityType = activity.activityType || activity.type || 'UnknownActivityRecord';
-                console.log(`Activity Type: ${activityType}`);
-                console.log(JSON.stringify(activity, null, 2));
-            });
-        }
-
-        console.log("Results");
-        if (retrievalResponse.references && Array.isArray(retrievalResponse.references)) {
-            retrievalResponse.references.forEach((reference) => {
-                const referenceType = reference.referenceType || reference.type || 'AzureSearchDoc';
-                console.log(`Reference Type: ${referenceType}`);
-                console.log(JSON.stringify(reference, null, 2));
-            });
-        }
+        // Log activities and results
+        printActivities(retrievalResponse);
+        printReferences(retrievalResponse);
 
         // Now do chat completion with full conversation history
         await generateFinalAnswer(openAIClient, messages);
@@ -538,7 +570,7 @@ async function generateFinalAnswer(
         });
 
         const answer = completion.choices[0].message.content;
-        console.log(answer?.replace(/\./g, "\n"));
+        console.log(answer);
 
         // Add this response to conversation history
         if (answer) {
@@ -637,16 +669,7 @@ async function deleteKnowledgeBase(credential: DefaultAzureCredential): Promise<
             }
         });
 
-        if (!response.ok) {
-            if (response.status === 404) {
-                console.log(`ℹ️ Knowledge base '${config.knowledgeBaseName}' does not exist or was already deleted.`);
-                return;
-            }
-            const errorText = await response.text();
-            throw new Error(`Failed to delete knowledge base: ${response.status} ${response.statusText}\n${errorText}`);
-        }
-
-        console.log(`✅ Knowledge base '${config.knowledgeBaseName}' deleted successfully.`);
+        await handleDeleteResponse(response, config.knowledgeBaseName, 'Knowledge base');
 
     } catch (error) {
         console.error("❌ Error deleting knowledge base:", error);
@@ -666,16 +689,7 @@ async function deleteKnowledgeSource(credential: DefaultAzureCredential): Promis
             }
         });
 
-        if (!response.ok) {
-            if (response.status === 404) {
-                console.log(`ℹ️ Knowledge source '${config.knowledgeSourceName}' does not exist or was already deleted.`);
-                return;
-            }
-            const errorText = await response.text();
-            throw new Error(`Failed to delete knowledge source: ${response.status} ${response.statusText}\n${errorText}`);
-        }
-
-        console.log(`✅ Knowledge source '${config.knowledgeSourceName}' deleted successfully.`);
+        await handleDeleteResponse(response, config.knowledgeSourceName, 'Knowledge source');
 
     } catch (error) {
         console.error("❌ Error deleting knowledge source:", error);
@@ -705,12 +719,7 @@ async function continueConversation(
         const newRetrievalResponse = await callAgenticRetrieval(credential, userAssistantMessages);
 
         // Extract assistant response and add to conversation
-        let assistantContent = '';
-        if (typeof newRetrievalResponse.response === 'string') {
-            assistantContent = newRetrievalResponse.response;
-        } else if (Array.isArray(newRetrievalResponse.response)) {
-            assistantContent = JSON.stringify(newRetrievalResponse.response);
-        }
+        const assistantContent = extractAssistantContent(newRetrievalResponse.response);
 
         // Add assistant response to conversation history
         messages.push({
@@ -719,38 +728,11 @@ async function continueConversation(
         });
 
         // Print follow-up answer in a more readable format
-        console.log("\n📝 ANSWER:");
-        console.log("─".repeat(80));
-        try {
-            const parsed = JSON.parse(assistantContent);
-            if (Array.isArray(parsed) && parsed[0]?.content?.[0]?.text) {
-                console.log(parsed[0].content[0].text);
-            } else {
-                console.log(assistantContent);
-            }
-        } catch {
-            console.log(assistantContent);
-        }
-        console.log("─".repeat(80));
+        printFormattedAnswer(assistantContent);
 
         // Log activities and results like the first retrieval
-        console.log("\nActivities:");
-        if (newRetrievalResponse.activity && Array.isArray(newRetrievalResponse.activity)) {
-            newRetrievalResponse.activity.forEach((activity) => {
-                const activityType = activity.activityType || activity.type || 'UnknownActivityRecord';
-                console.log(`Activity Type: ${activityType}`);
-                console.log(JSON.stringify(activity, null, 2));
-            });
-        }
-
-        console.log("Results");
-        if (newRetrievalResponse.references && Array.isArray(newRetrievalResponse.references)) {
-            newRetrievalResponse.references.forEach((reference) => {
-                const referenceType = reference.referenceType || reference.type || 'AzureSearchDoc';
-                console.log(`Reference Type: ${referenceType}`);
-                console.log(JSON.stringify(reference, null, 2));
-            });
-        }
+        printActivities(newRetrievalResponse);
+        printReferences(newRetrievalResponse);
 
         // Generate final answer for follow-up
         await generateFinalAnswer(openAIClient, messages);
