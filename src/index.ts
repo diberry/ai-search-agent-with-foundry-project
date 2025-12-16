@@ -198,7 +198,7 @@ async function main(): Promise<void> {
         const { searchIndexClient, credential, openAIClient } = await prepareSearchService(config.uploadDocs);
 
         // Run agentic retrieval with conversation
-        await runAgenticRetrieval(credential, openAIClient);
+        await runAgenticRetrieval(credential);
 
         // Clean up resources based on env var
         await cleanupAllResources(searchIndexClient, credential, config.cleanupResources);
@@ -415,7 +415,11 @@ async function createKnowledgeSource(credential: DefaultAzureCredential): Promis
             description: "Knowledge source for Earth at Night e-book content",
             kind: "searchIndex",
             searchIndexParameters: {
-                searchIndexName: config.indexName
+                searchIndexName: config.indexName,
+                sourceDataFields: [
+                    { name: "id" },
+                    { name: "page_number" }
+                ]
             }
         };
 
@@ -505,7 +509,7 @@ async function createKnowledgeBase(credential: DefaultAzureCredential): Promise<
     }
 }
 
-async function runAgenticRetrieval(credential: DefaultAzureCredential, openAIClient: AzureOpenAI): Promise<void> {
+async function runAgenticRetrieval(credential: DefaultAzureCredential): Promise<void> {
     console.log("🔍 Running agentic retrieval...");
 
     const messages: KnowledgeAgentMessage[] = [
@@ -542,46 +546,11 @@ If you do not have the answer, respond with "I don't know".`
         printActivities(retrievalResponse);
         printReferences(retrievalResponse);
 
-        // Now do chat completion with full conversation history
-        await generateFinalAnswer(openAIClient, messages);
-
         // Continue conversation with second question
-        await continueConversation(credential, openAIClient, messages);
+        await continueConversation(credential, messages);
 
     } catch (error) {
         console.error("❌ Error in agentic retrieval:", error);
-        throw error;
-    }
-}
-
-async function generateFinalAnswer(
-    openAIClient: AzureOpenAI,
-    messages: KnowledgeAgentMessage[]
-): Promise<void> {
-
-    console.log("\n[ASSISTANT]: ");
-
-    try {
-        const completion = await openAIClient.chat.completions.create({
-            model: config.azureOpenAIGptDeployment,
-            messages: messages.map(m => ({ role: m.role, content: m.content })) as any,
-            max_completion_tokens: 1000
-            // Note: gpt-5-mini reasoning model only supports temperature=1 (default)
-        });
-
-        const answer = completion.choices[0].message.content;
-        console.log(answer);
-
-        // Add this response to conversation history
-        if (answer) {
-            messages.push({
-                role: "assistant",
-                content: answer
-            });
-        }
-
-    } catch (error) {
-        console.error("❌ Error generating final answer:", error);
         throw error;
     }
 }
@@ -699,7 +668,6 @@ async function deleteKnowledgeSource(credential: DefaultAzureCredential): Promis
 
 async function continueConversation(
     credential: DefaultAzureCredential,
-    openAIClient: AzureOpenAI,
     messages: KnowledgeAgentMessage[]
 ): Promise<void> {
     console.log("\n💬 === Continuing Conversation ===");
@@ -733,9 +701,6 @@ async function continueConversation(
         // Log activities and results like the first retrieval
         printActivities(newRetrievalResponse);
         printReferences(newRetrievalResponse);
-
-        // Generate final answer for follow-up
-        await generateFinalAnswer(openAIClient, messages);
 
         console.log("\n🎉 === Conversation Complete ===");
 
