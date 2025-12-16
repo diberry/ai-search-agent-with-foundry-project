@@ -100,6 +100,9 @@ module aiSearch 'br/public:avm/res/search/search-service:0.11.1' = {
     replicaCount: 1
     publicNetworkAccess: 'Enabled'
     disableLocalAuth: false
+    managedIdentities: {
+      systemAssigned: true
+    }
     authOptions: {
       aadOrApiKey: {
         aadAuthFailureMode: 'http401WithBearerChallenge'
@@ -162,7 +165,19 @@ module aiProject 'br/public:avm/ptn/ai-ml/ai-foundry:0.6.0' = {
         }
         name: 'gpt-4o'
         sku: {
-          capacity: 1
+          capacity: 50
+          name: 'Standard'
+        }
+      }
+      {
+        model: {
+          format: 'OpenAI'
+          name: 'text-embedding-3-large'
+          version: '1'
+        }
+        name: 'text-embedding-3-large'
+        sku: {
+          capacity: 50
           name: 'Standard'
         }
       }
@@ -189,6 +204,7 @@ module aiProject 'br/public:avm/ptn/ai-ml/ai-foundry:0.6.0' = {
         }
       ]
     }
+    aiSearchConfiguration:{existingResourceId: aiSearch.outputs.resourceId}
   }
 }
 

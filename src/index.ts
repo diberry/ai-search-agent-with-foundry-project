@@ -16,19 +16,19 @@ import {
 } from '@azure/search-documents';
 import { AzureOpenAI } from "openai/index.mjs";
 
-// Load the .env file if it exists
-import * as dotenv from "dotenv";
-dotenv.config();
+
+console.log(process.env);
 
 // Configuration - Update these values for your environment
 const config = {
-    searchEndpoint: process.env.AZURE_SEARCH_ENDPOINT || "https://your-search-service.search.windows.net",
-    azureOpenAIEndpoint: process.env.AZURE_OPENAI_ENDPOINT || "https://your-ai-foundry-resource.openai.azure.com/",
-    azureOpenAIGptDeployment: process.env.AZURE_OPENAI_GPT_DEPLOYMENT || "gpt-5-mini",
-    azureOpenAIGptModel: "gpt-5-mini",
-    azureOpenAIApiVersion: process.env.OPENAI_API_VERSION || "2025-03-01-preview",
-    azureOpenAIEmbeddingDeployment: process.env.AZURE_OPENAI_EMBEDDING_DEPLOYMENT || "text-embedding-3-large",
-    azureOpenAIEmbeddingModel: "text-embedding-3-large",
+    searchEndpoint: process.env.AZURE_SEARCH_ENDPOINT!,
+    azureOpenAIEndpoint: process.env.AZURE_OPENAI_ENDPOINT!,
+    azureOpenAIGptDeployment: process.env.AZURE_OPENAI_GPT_DEPLOYMENT!,
+    azureOpenAIGptModel: process.env.AZURE_OPENAI_GPT_DEPLOYMENT!,
+    azureOpenAIApiVersion: process.env.OPENAI_API_VERSION!,
+    azureOpenAIEmbeddingDeployment: process.env.AZURE_OPENAI_EMBEDDING_DEPLOYMENT!,
+    azureOpenAIEmbeddingModel: process.env.AZURE_OPENAI_EMBEDDING_DEPLOYMENT!,
+    azureOpenAIEmbeddingApiVersion: process.env.EMBEDDING_API_VERSION!,
     indexName: "earth_at_night",
     agentName: "earth-search-agent",
     searchApiVersion: "2025-05-01-Preview"
@@ -84,10 +84,11 @@ interface AgenticRetrievalResponse {
     [key: string]: any;
 }
 
-async function main(): Promise<void> {
-    try {
-        console.log("🚀 Starting Azure AI Search agentic retrieval quickstart...\n");
-
+async function prepareDocuments(uploadDocs: boolean): Promise<{
+    searchIndexClient: SearchIndexClient;
+    credential: DefaultAzureCredential;
+    openAIClient: AzureOpenAI;
+}> {
         // Initialize Azure credentials using managed identity (recommended)
         const credential = new DefaultAzureCredential();
 
@@ -104,11 +105,23 @@ async function main(): Promise<void> {
             azureADTokenProvider,
         });
 
+        if (uploadDocs) {
         // Create search index with vector and semantic capabilities
         await createSearchIndex(searchIndexClient);
 
-        // Upload sample documents
-        await uploadDocuments(searchClient);
+            // Upload sample documents
+            await uploadDocuments(searchClient);
+        }
+
+        return { searchIndexClient, credential, openAIClient } ;
+}
+
+
+async function main(): Promise<void> {
+    try {
+        console.log("🚀 Starting Azure AI Search agentic retrieval quickstart...\n");
+
+        const { searchIndexClient, credential, openAIClient } = await prepareDocuments(process.env.UPLOAD_DOCS === 'false' || true);
 
         // Create knowledge agent for agentic retrieval
         await createKnowledgeAgent(credential);
@@ -248,7 +261,7 @@ async function fetchEarthAtNightDocuments(): Promise<EarthAtNightDocument[]> {
             throw new Error(`Failed to fetch documents: ${response.status} ${response.statusText}`);
         }
 
-        const documents = await response.json();
+        const documents = await response.json() as any[];
         console.log(`✅ Fetched ${documents.length} documents from GitHub`);
 
         // Validate and transform documents to match our interface
