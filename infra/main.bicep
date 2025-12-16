@@ -1,5 +1,4 @@
 targetScope = 'subscription'
-// targetScope = 'resourceGroup'
 
 @minLength(1)
 @maxLength(64)
@@ -16,73 +15,50 @@ param resourceGroupName string = 'rg-${environmentName}'
 @minLength(1)
 @description('Primary location for all resources')
 @allowed([
-  'australiaeast'
-  'brazilsouth'
-  'canadacentral'
-  'canadaeast'
-  'eastus'
+  // 'australiaeast'
+  // 'brazilsouth'
+  // 'canadacentral'
+  // 'canadaeast'
+  // 'eastus'
   'eastus2'
-  'francecentral'
-  'germanywestcentral'
-  'italynorth'
-  'japaneast'
-  'koreacentral'
-  'northcentralus'
-  'norwayeast'
-  'polandcentral'
-  'southafricanorth'
-  'southcentralus'
-  'southeastasia'
-  'southindia'
-  'spaincentral'
-  'swedencentral'
-  'switzerlandnorth'
-  'uaenorth'
-  'uksouth'
-  'westus'
-  'westus2'
-  'westus3'
+  // 'francecentral'
+  // 'germanywestcentral'
+  // 'italynorth'
+  // 'japaneast'
+  // 'koreacentral'
+  // 'northcentralus'
+  // 'norwayeast'
+  // 'polandcentral'
+  // 'southafricanorth'
+  // 'southcentralus'
+  // 'southeastasia'
+  // 'southindia'
+  // 'spaincentral'
+  // 'swedencentral'
+  // 'switzerlandnorth'
+  // 'uaenorth'
+  // 'uksouth'
+  // 'westus'
+  // 'westus2'
+  // 'westus3'
 ])
 param location string
 
-@metadata({azd: {
-  type: 'location'
-  usageName: [
-    'OpenAI.GlobalStandard.gpt-4o-mini,10'
-  ]}
+@metadata({
+  azd: {
+    type: 'location'
+    usageName: [
+      'OpenAI.GlobalStandard.gpt-4o-mini,10'
+    ]
+  }
 })
-param aiDeploymentsLocation string
-
 @description('Id of the user or app to assign application roles')
 param principalId string
 
 @description('Principal type of user or app')
 param principalType string
 
-@description('Optional. Name of an existing AI Services account within the resource group. If not provided, a new one will be created.')
-param aiFoundryResourceName string = ''
-
-@description('Optional. Name of the AI Foundry project. If not provided, a default name will be used.')
-param aiFoundryProjectName string = 'ai-project-${environmentName}'
-
-@description('List of model deployments')
-param aiProjectDeploymentsJson string = '[]'
-
-@description('List of connections')
-param aiProjectConnectionsJson string = '[]'
-
-@description('List of resources to create and connect to the AI project')
-param aiProjectDependentResourcesJson string = '[]'
-
-var aiProjectDeployments = json(aiProjectDeploymentsJson)
-var aiProjectConnections = json(aiProjectConnectionsJson)
-var aiProjectDependentResources = json(aiProjectDependentResourcesJson)
-
-@description('Enable hosted agent deployment')
-param enableHostedAgents bool
-
-@description('Enable monitoring for the AI project')
-param enableMonitoring bool = true
+var resourceToken = toLower(uniqueString(subscription().id, environmentName, location))
 
 // Tags that should be applied to all resources.
 // 
@@ -94,75 +70,149 @@ var tags = {
 }
 
 // Check if resource group exists and create it if it doesn't
-resource rg 'Microsoft.Resources/resourceGroups@2021-04-01' = {
+resource resourceGroup 'Microsoft.Resources/resourceGroups@2021-04-01' = {
   name: resourceGroupName
   location: location
   tags: tags
 }
 
-// Build dependent resources array conditionally
-// Check if ACR already exists in the user-provided array to avoid duplicates
-var hasAcr = contains(map(aiProjectDependentResources, r => r.resource), 'registry')
-var dependentResources = (enableHostedAgents) && !hasAcr ? union(aiProjectDependentResources, [
-  {
-    resource: 'registry'
-    connectionName: 'acr-connection'
-  }
-]) : aiProjectDependentResources
-
-// AI Project module
-module aiProject 'core/ai/ai-project.bicep' = {
-  scope: rg
-  name: 'ai-project'
+// User-assigned managed identity f
+module managedIdentity 'br/public:avm/res/managed-identity/user-assigned-identity:0.4.0' = {
+  name: 'solutionIdentity'
+  scope: resourceGroup
   params: {
+    name: '${resourceToken}-identity'
+    location: location
     tags: tags
-    location: aiDeploymentsLocation
-    aiFoundryProjectName: aiFoundryProjectName
-    principalId: principalId
-    principalType: principalType
-    existingAiAccountName: aiFoundryResourceName
-    deployments: aiProjectDeployments
-    connections: aiProjectConnections
-    additionalDependentResources: dependentResources
-    enableMonitoring: enableMonitoring
-    enableHostedAgents: enableHostedAgents
   }
 }
 
+module aiSearch 'br/public:avm/res/search/search-service:0.11.1' = {
+  name: 'aiSearch'
+  scope: resourceGroup
+  params: {
+    name: '${resourceToken}-search'
+    location: location
+    sku: 'basic'
+    tags: tags
+    semanticSearch: 'standard'
+    partitionCount: 1
+    replicaCount: 1
+    publicNetworkAccess: 'Enabled'
+    disableLocalAuth: false
+    authOptions: {
+      aadOrApiKey: {
+        aadAuthFailureMode: 'http401WithBearerChallenge'
+      }
+    }
+    roleAssignments: [
+      {
+        principalId: principalId
+        roleDefinitionIdOrName: 'Search Index Data Contributor'
+        principalType: principalType
+      }
+      {
+        principalId: principalId
+        roleDefinitionIdOrName: 'Search Index Data Reader'
+        principalType: principalType
+      }
+      {
+        principalId: principalId
+        roleDefinitionIdOrName: 'Search Service Contributor'
+        principalType: principalType
+      } 
+      {
+        principalId: principalId
+        roleDefinitionIdOrName: 'Contributor'
+        principalType: principalType
+      }
+      // Managed Identity needs full permissions to create index and upload documents
+      {
+        principalId: managedIdentity.outputs.principalId
+        roleDefinitionIdOrName: 'Search Index Data Contributor'
+        principalType: 'ServicePrincipal'
+      }
+      {
+        principalId: managedIdentity.outputs.principalId
+        roleDefinitionIdOrName: 'Search Index Data Reader'
+        principalType: 'ServicePrincipal'
+      }
+      {
+        principalId: managedIdentity.outputs.principalId
+        roleDefinitionIdOrName: 'Search Service Contributor'
+        principalType: 'ServicePrincipal'
+      }
+    ]
+  }
+}
+
+module aiProject 'br/public:avm/ptn/ai-ml/ai-foundry:0.6.0' = {
+  scope: resourceGroup
+  name: 'azure-ai-foundry-project'
+  params: {
+    // Required parameters
+    baseName: 'dibproj'
+    // Non-required parameters
+    aiModelDeployments: [
+      {
+        model: {
+          format: 'OpenAI'
+          name: 'gpt-4o'
+          version: '2024-11-20'
+        }
+        name: 'gpt-4o'
+        sku: {
+          capacity: 1
+          name: 'Standard'
+        }
+      }
+    ]
+    location: location
+    includeAssociatedResources: false
+    aiFoundryConfiguration: {
+      roleAssignments: [
+        {
+          principalId: managedIdentity.outputs.principalId
+          roleDefinitionIdOrName: 'Azure AI Developer'
+          principalType: 'ServicePrincipal'
+        }
+        {
+          principalId: principalId
+          roleDefinitionIdOrName: 'Azure AI Developer'
+          principalType: principalType
+        }
+        // Grant AI Search service access to Azure OpenAI models for embeddings, query planning, and answer generation
+        {
+          principalId: aiSearch.outputs.systemAssignedMIPrincipalId!
+          roleDefinitionIdOrName: 'Cognitive Services User'
+          principalType: 'ServicePrincipal'
+        }
+      ]
+    }
+  }
+}
+
+/*
+
+
+  (✓) Done: Resource group: rg-dibproj (3.301s)
+  (✓) Done: Search service: gm767p5jbjaie-search (846ms)
+  |      =| Creating/Updating resources
+ERROR: error executing step command 'provision': deployment failed: error deploying infrastructure: deploying to subscription: 
+
+Deployment Error Details:
+InvalidTemplate: Unable to process template language expressions for resource '/subscriptions/aa94d689-ef39-45c8-9434-0d9efb62b456/resourceGroups/rg-dibproj/providers/Microsoft.Resources/deployments/azure-ai-foundry-project' at line '1' and column '88107'. 'The language expression property 'value' doesn't exist, available properties are 'type'.'
+
+TraceID: 05a5d77f91f35548579c609b33180ccc
+
+*/
+
+
 // Resources
 output AZURE_RESOURCE_GROUP string = resourceGroupName
-output AZURE_AI_ACCOUNT_ID string = aiProject.outputs.accountId
-output AZURE_AI_PROJECT_ID string = aiProject.outputs.projectId
-output AZURE_AI_FOUNDRY_PROJECT_ID string = aiProject.outputs.projectId
-output AZURE_AI_ACCOUNT_NAME string = aiProject.outputs.aiServicesAccountName
-output AZURE_AI_PROJECT_NAME string = aiProject.outputs.projectName
 
 // Endpoints
-output AZURE_AI_PROJECT_ENDPOINT string = aiProject.outputs.AZURE_AI_PROJECT_ENDPOINT
-output AZURE_OPENAI_ENDPOINT string = aiProject.outputs.AZURE_OPENAI_ENDPOINT
-output APPLICATIONINSIGHTS_CONNECTION_STRING string = aiProject.outputs.APPLICATIONINSIGHTS_CONNECTION_STRING
-
-// Dependent Resources and Connections
-
-// ACR
-output AZURE_AI_PROJECT_ACR_CONNECTION_NAME string = aiProject.outputs.dependentResources.registry.connectionName
-output AZURE_CONTAINER_REGISTRY_ENDPOINT string = aiProject.outputs.dependentResources.registry.loginServer
-
-// Bing Search
-output BING_GROUNDING_CONNECTION_NAME  string = aiProject.outputs.dependentResources.bing_grounding.connectionName
-output BING_GROUNDING_RESOURCE_NAME string = aiProject.outputs.dependentResources.bing_grounding.name
-output BING_GROUNDING_CONNECTION_ID string = aiProject.outputs.dependentResources.bing_grounding.connectionId
-
-// Bing Custom Search
-output BING_CUSTOM_GROUNDING_CONNECTION_NAME string = aiProject.outputs.dependentResources.bing_custom_grounding.connectionName
-output BING_CUSTOM_GROUNDING_NAME string = aiProject.outputs.dependentResources.bing_custom_grounding.name
-output BING_CUSTOM_GROUNDING_CONNECTION_ID string = aiProject.outputs.dependentResources.bing_custom_grounding.connectionId
-
-// Azure AI Search
-output AZURE_AI_SEARCH_CONNECTION_NAME string = aiProject.outputs.dependentResources.search.connectionName
-output AZURE_AI_SEARCH_SERVICE_NAME string = aiProject.outputs.dependentResources.search.serviceName
-
-// Azure Storage
-output AZURE_STORAGE_CONNECTION_NAME string = aiProject.outputs.dependentResources.storage.connectionName
-output AZURE_STORAGE_ACCOUNT_NAME string = aiProject.outputs.dependentResources.storage.accountName
-
+output AZURE_AI_PROJECT_ENDPOINT string = aiProject.outputs.aiProjectName
+output AZURE_AI_PROJECT_NAME string = aiProject.outputs.aiProjectName
+output AZURE_AI_SEARCH_SERVICE_NAME string = aiSearch.outputs.name
+output AZURE_AI_SERVICES_NAME string = aiProject.outputs.aiServicesName
