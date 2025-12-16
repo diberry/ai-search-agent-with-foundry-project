@@ -160,13 +160,13 @@ module aiProject 'br/public:avm/ptn/ai-ml/ai-foundry:0.6.0' = {
       {
         model: {
           format: 'OpenAI'
-          name: 'gpt-4o'
-          version: '2024-11-20'
+          name: 'gpt-5-mini'
+          version: '2025-08-07'
         }
-        name: 'gpt-4o'
+        name: 'gpt-5-mini'
         sku: {
           capacity: 50
-          name: 'Standard'
+          name: 'GlobalStandard'
         }
       }
       {
@@ -186,17 +186,29 @@ module aiProject 'br/public:avm/ptn/ai-ml/ai-foundry:0.6.0' = {
     includeAssociatedResources: false
     aiFoundryConfiguration: {
       roleAssignments: [
+        // Managed Identity - for application runtime
         {
           principalId: managedIdentity.outputs.principalId
           roleDefinitionIdOrName: 'Azure AI Developer'
           principalType: 'ServicePrincipal'
         }
         {
+          principalId: managedIdentity.outputs.principalId
+          roleDefinitionIdOrName: 'Cognitive Services OpenAI User'
+          principalType: 'ServicePrincipal'
+        }
+        // User/Local Identity - for development and testing
+        {
           principalId: principalId
           roleDefinitionIdOrName: 'Azure AI Developer'
           principalType: principalType
         }
-        // Grant AI Search service access to Azure OpenAI models for embeddings, query planning, and answer generation
+        {
+          principalId: principalId
+          roleDefinitionIdOrName: 'Cognitive Services OpenAI User'
+          principalType: principalType
+        }
+        // AI Search system identity - for vectorization and embeddings
         {
           principalId: aiSearch.outputs.systemAssignedMIPrincipalId!
           roleDefinitionIdOrName: 'Cognitive Services User'
@@ -212,9 +224,19 @@ module aiProject 'br/public:avm/ptn/ai-ml/ai-foundry:0.6.0' = {
 // Resources
 output AZURE_RESOURCE_GROUP string = resourceGroupName
 
-// Endpoints
-output AZURE_AI_PROJECT_ENDPOINT string = aiProject.outputs.aiProjectName
-output AZURE_AI_PROJECT_NAME string = aiProject.outputs.aiProjectName
+// Search Service
+output AZURE_SEARCH_ENDPOINT string = 'https://${aiSearch.outputs.name}.search.windows.net'
 output AZURE_AI_SEARCH_SERVICE_NAME string = aiSearch.outputs.name
+
+// Azure OpenAI / Foundry
+// The AI Services endpoint is in format: https://<ai-services-name>.cognitiveservices.azure.com/
+output AZURE_OPENAI_ENDPOINT string = 'https://${aiProject.outputs.aiServicesName}.cognitiveservices.azure.com/'
+output AZURE_OPENAI_GPT_DEPLOYMENT string = 'gpt-5-mini'
+output AZURE_OPENAI_EMBEDDING_DEPLOYMENT string = 'text-embedding-3-large'
+output OPENAI_API_VERSION string = '2025-01-01-preview'
+output EMBEDDING_API_VERSION string = '2023-05-15'
+
+// AI Project
+output AZURE_AI_PROJECT_NAME string = aiProject.outputs.aiProjectName
 output AZURE_AI_SERVICES_NAME string = aiProject.outputs.aiServicesName
 

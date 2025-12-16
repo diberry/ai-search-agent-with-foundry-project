@@ -476,7 +476,20 @@ If you do not have the answer, respond with "I don't know".`
             content: assistantContent
         });
 
-        console.log(assistantContent);
+        // Print answer in a more readable format
+        console.log("\n📝 ANSWER:");
+        console.log("─".repeat(80));
+        try {
+            const parsed = JSON.parse(assistantContent);
+            if (Array.isArray(parsed) && parsed[0]?.content?.[0]?.text) {
+                console.log(parsed[0].content[0].text);
+            } else {
+                console.log(assistantContent);
+            }
+        } catch {
+            console.log(assistantContent);
+        }
+        console.log("─".repeat(80));
 
         // Log activities and results...
         console.log("\nActivities:");
@@ -520,8 +533,8 @@ async function generateFinalAnswer(
         const completion = await openAIClient.chat.completions.create({
             model: config.azureOpenAIGptDeployment,
             messages: messages.map(m => ({ role: m.role, content: m.content })) as any,
-            max_tokens: 1000,
-            temperature: 0.7
+            max_completion_tokens: 1000
+            // Note: gpt-5-mini reasoning model only supports temperature=1 (default)
         });
 
         const answer = completion.choices[0].message.content;
@@ -705,7 +718,20 @@ async function continueConversation(
             content: assistantContent
         });
 
-        console.log(assistantContent);
+        // Print follow-up answer in a more readable format
+        console.log("\n📝 ANSWER:");
+        console.log("─".repeat(80));
+        try {
+            const parsed = JSON.parse(assistantContent);
+            if (Array.isArray(parsed) && parsed[0]?.content?.[0]?.text) {
+                console.log(parsed[0].content[0].text);
+            } else {
+                console.log(assistantContent);
+            }
+        } catch {
+            console.log(assistantContent);
+        }
+        console.log("─".repeat(80));
 
         // Log activities and results like the first retrieval
         console.log("\nActivities:");

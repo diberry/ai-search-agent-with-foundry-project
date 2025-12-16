@@ -10,3 +10,22 @@ requiredVersions:
     # the azd ai agent extension is required for this template
     "azure.ai.agents": ">=0.1.0-preview"
 
+hooks:
+  postprovision:
+    posix:
+      shell: sh
+      run: |
+        echo "Creating .env file from azd environment variables..."
+        azd env get-values > .env
+        echo "UPLOAD_DOCS=true" >> .env
+        echo "CLEANUP_RESOURCES=false" >> .env
+        echo ".env file created successfully!"
+    windows:
+      shell: pwsh
+      run: |
+        Write-Host "Creating .env file from azd environment variables..."
+        azd env get-values | Out-File -FilePath .env -Encoding utf8
+        Add-Content -Path .env -Value "UPLOAD_DOCS=true"
+        Add-Content -Path .env -Value "CLEANUP_RESOURCES=false"
+        Write-Host ".env file created successfully!"
+
