@@ -192,21 +192,6 @@ module aiProject 'br/public:avm/ptn/ai-ml/ai-foundry:0.6.0' = {
   }
 }
 
-/*
-
-
-  (✓) Done: Resource group: rg-dibproj (3.301s)
-  (✓) Done: Search service: gm767p5jbjaie-search (846ms)
-  |      =| Creating/Updating resources
-ERROR: error executing step command 'provision': deployment failed: error deploying infrastructure: deploying to subscription: 
-
-Deployment Error Details:
-InvalidTemplate: Unable to process template language expressions for resource '/subscriptions/aa94d689-ef39-45c8-9434-0d9efb62b456/resourceGroups/rg-dibproj/providers/Microsoft.Resources/deployments/azure-ai-foundry-project' at line '1' and column '88107'. 'The language expression property 'value' doesn't exist, available properties are 'type'.'
-
-TraceID: 05a5d77f91f35548579c609b33180ccc
-
-*/
-
 
 // Resources
 output AZURE_RESOURCE_GROUP string = resourceGroupName
@@ -216,3 +201,4 @@ output AZURE_AI_PROJECT_ENDPOINT string = aiProject.outputs.aiProjectName
 output AZURE_AI_PROJECT_NAME string = aiProject.outputs.aiProjectName
 output AZURE_AI_SEARCH_SERVICE_NAME string = aiSearch.outputs.name
 output AZURE_AI_SERVICES_NAME string = aiProject.outputs.aiServicesName
+
