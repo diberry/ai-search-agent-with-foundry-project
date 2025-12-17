@@ -13,7 +13,8 @@ import {
     SemanticConfiguration,
     SemanticPrioritizedFields,
     SemanticField,
-    SearchIndexingBufferedSender
+    SearchIndexingBufferedSender,
+    KnowledgeRetrievalOutputMode
 } from '@azure/search-documents';
 
 // Configuration - Update these values for your environment
@@ -29,8 +30,16 @@ const config = {
     knowledgeBaseName: 'earth-knowledge-base',
     searchApiVersion: "2025-11-01-preview"
 };
-export const documentKeyRetriever: (document: Hotel) => string = (document: Hotel): string => {
-  return document.hotelId!;
+
+interface EarthAtNightDocument {
+    id: string;
+    page_chunk: string;
+    page_embedding_text_3_large: number[];
+    page_number: number;
+}
+
+export const documentKeyRetriever: (document: EarthAtNightDocument) => string = (document: EarthAtNightDocument): string => {
+  return document.id!;
 };
 
 export const WAIT_TIME = 4000;
@@ -166,12 +175,59 @@ bufferedClient.on("batchFailed", (response: any) => {
 });
 
 await bufferedClient.uploadDocuments(documents);
+await bufferedClient.flush();
+await bufferedClient.dispose();
 
-console.log(`Waiting 40 seconds for indexing to complete...`);
+console.log(`Waiting for indexing to complete...`);
+console.log(`Expected documents: ${documents.length}`);
 await delay(WAIT_TIME);
 
 let count = await searchClient.getDocumentsCount();
+console.log(`Current indexed count: ${count}`);
+
 while (count !== documents.length) {
     await delay(WAIT_TIME);
     count = await searchClient.getDocumentsCount();
+    console.log(`Current indexed count: ${count}`);
 }
+
+console.log(`✓ All ${documents.length} documents indexed successfully!`);
+
+
+const knowledgeSource = await searchIndexClient.createKnowledgeSource({
+    name: config.knowledgeSourceName,
+    description: "Knowledge source for Earth at Night e-book content",
+    kind: "searchIndex",
+    searchIndexParameters: {
+        searchIndexName: config.indexName,
+        sourceDataFields: [
+            { name: "id" },
+            { name: "page_number" }
+        ]
+    }
+});
+
+console.log(`✅ Knowledge source '${config.knowledgeSourceName}' created successfully.`);
+
+const knowledgeBase = await searchIndexClient.createKnowledgeBase({
+    name: config.knowledgeBaseName,
+    knowledgeSources: [
+        {
+            name: config.knowledgeSourceName
+        }
+    ],
+    models: [
+        {
+            kind: "azureOpenAI",
+            azureOpenAIParameters: {
+                resourceUrl: config.azureOpenAIEndpoint,
+                deploymentId: config.azureOpenAIGptDeployment,
+                modelName: config.azureOpenAIGptModel
+            }
+        }
+    ],
+    outputMode: "answerSynthesis" as KnowledgeRetrievalOutputMode,
+    answerInstructions: "Provide a two sentence concise and informative answer based on the retrieved documents."
+});
+
+console.log(`✅ Knowledge base '${config.knowledgeBaseName}' created successfully.`);

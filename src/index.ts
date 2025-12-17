@@ -37,6 +37,21 @@ interface EarthAtNightDocument {
     page_embedding_text_3_large: number[];
     page_number: number;
 }
+
+export const documentKeyRetriever: (document: EarthAtNightDocument) => string = (document: EarthAtNightDocument): string => {
+  return document.id!;
+};
+
+export const WAIT_TIME = 4000;
+export function delay(timeInMs: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, timeInMs));
+}
+interface EarthAtNightDocument {
+    id: string;
+    page_chunk: string;
+    page_embedding_text_3_large: number[];
+    page_number: number;
+}
 const index: SearchIndex = {
     name: config.indexName,
     fields: [
@@ -114,9 +129,7 @@ const index: SearchIndex = {
         ]
     } as SemanticSearch
 };
-export const documentKeyRetriever: (document: EarthAtNightDocument) => string = (document: EarthAtNightDocument): string => {
-    return document.id!;
-};
+
 const credential = new DefaultAzureCredential();
 const searchTokenProvider = getBearerTokenProvider(credential, "https://search.azure.com/.default");
 const openAITokenProvider = getBearerTokenProvider(credential, "https://cognitiveservices.azure.com/.default");
@@ -162,10 +175,23 @@ bufferedClient.on("batchFailed", (response: any) => {
 });
 
 await bufferedClient.uploadDocuments(documents);
+await bufferedClient.flush();
+await bufferedClient.dispose();
 
-console.log(`Waiting 40 seconds for indexing to complete...`);
-await new Promise(resolve => setTimeout(resolve, 4000));
+console.log(`Waiting for indexing to complete...`);
+console.log(`Expected documents: ${documents.length}`);
+await delay(WAIT_TIME);
 
+let count = await searchClient.getDocumentsCount();
+console.log(`Current indexed count: ${count}`);
+
+while (count !== documents.length) {
+    await delay(WAIT_TIME);
+    count = await searchClient.getDocumentsCount();
+    console.log(`Current indexed count: ${count}`);
+}
+
+console.log(`✓ All ${documents.length} documents indexed successfully!`);
 
 const knowledgeSource = await searchIndexClient.createKnowledgeSource({
     name: config.knowledgeSourceName,
@@ -322,8 +348,8 @@ console.log("─".repeat(80));
 console.log("\n✅ Quickstart completed successfully!");
 
 // Clean up resources
-await searchIndexClient.deleteKnowledgeBase(config.knowledgeBaseName);
-await searchIndexClient.deleteKnowledgeSource(config.knowledgeSourceName);
-await searchIndexClient.deleteIndex(config.indexName);
+//await searchIndexClient.deleteKnowledgeBase(config.knowledgeBaseName);
+//await searchIndexClient.deleteKnowledgeSource(config.knowledgeSourceName);
+//await searchIndexClient.deleteIndex(config.indexName);
 
 console.log(`\n🗑️  Cleaned up resources.`);
