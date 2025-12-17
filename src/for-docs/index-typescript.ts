@@ -137,24 +137,6 @@ const bufferedClient = new SearchIndexingBufferedSender<EarthAtNightDocument>(
     },
 );
 
-bufferedClient.on("batchAdded", (batch: { action?: string; documents?: any[] }) => {
-    console.log(`Batch Added Event: action=${batch.action}, documents=${batch.documents?.length || 0}`);
-});
-
-bufferedClient.on("beforeDocumentSent", (response: IndexDocumentsAction<EarthAtNightDocument>) => {
-    console.log(`Before Document Sent Event: action=${response.__actionType}, id=${response.id}, page=${response.page_number}`);
-});
-
-bufferedClient.on("batchSucceeded", (response: IndexDocumentsResult) => {
-    console.log("Batch Succeeded Event has been receieved....");
-    console.log(`Successfully indexed ${response.results.length} documents`);
-});
-
-bufferedClient.on("batchFailed", (response:any) => {
-    console.log("Batch Failed Event has been receieved....");
-    console.log(response);
-});
-
 await bufferedClient.uploadDocuments(documents);
 await bufferedClient.flush();
 await bufferedClient.dispose();

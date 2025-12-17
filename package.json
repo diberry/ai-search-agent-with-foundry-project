@@ -9,6 +9,7 @@
     "start": "node --env-file ./.env dist/index.js",
     "dev": "tsc && node --env-file ./.env dist/index.js",
     "upload": "tsc && node --env-file ./.env dist/upload.js",
+    "dev:js": "node --env-file ./.env src/JS-ONLY/index.js",
     "clean": "rm -rf dist"
   },
   "keywords": [
@@ -25,7 +26,7 @@
     "@azure/search-documents": "^12.3.0-beta.1"
   },
   "devDependencies": {
-    "@types/node": "^22.10.2",
+    "@types/node": "^22.19.3",
     "typescript": "^5.7.2"
   }
 }

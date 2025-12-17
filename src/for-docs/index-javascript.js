@@ -2,41 +2,20 @@ import { DefaultAzureCredential } from '@azure/identity';
 import {
     SearchIndexClient,
     SearchClient,
-    SearchIndex,
-    SearchField,
-    VectorSearch,
-    VectorSearchProfile,
-    HnswAlgorithmConfiguration,
-    AzureOpenAIVectorizer,
-    AzureOpenAIParameters,
     KnowledgeRetrievalClient,
-    SemanticSearch,
-    SemanticConfiguration,
-    SemanticPrioritizedFields,
-    SemanticField,
-    SearchIndexingBufferedSender,
-    KnowledgeRetrievalOutputMode,
-    IndexDocumentsAction
+    SearchIndexingBufferedSender
 } from '@azure/search-documents';
-import type { IndexDocumentsResult } from '@azure/search-documents';
 
-interface EarthAtNightDocument {
-    id: string;
-    page_chunk: string;
-    page_embedding_text_3_large: number[];
-    page_number: number;
-}
-
-export const documentKeyRetriever: (document: EarthAtNightDocument) => string = (document: EarthAtNightDocument): string => {
-  return document.id!;
+export const documentKeyRetriever = (document) => {
+  return document.id;
 };
 
 export const WAIT_TIME = 4000;
-export function delay(timeInMs: number): Promise<void> {
+export function delay(timeInMs) {
   return new Promise((resolve) => setTimeout(resolve, timeInMs));
 }
 
-const index: SearchIndex = {
+const index = {
     name: 'earth_at_night',
     fields: [
         {
@@ -46,7 +25,7 @@ const index: SearchIndex = {
             filterable: true,
             sortable: true,
             facetable: true
-        } as SearchField,
+        },
         {
             name: "page_chunk",
             type: "Edm.String",
@@ -54,7 +33,7 @@ const index: SearchIndex = {
             filterable: false,
             sortable: false,
             facetable: false
-        } as SearchField,
+        },
         {
             name: "page_embedding_text_3_large",
             type: "Collection(Edm.Single)",
@@ -64,14 +43,14 @@ const index: SearchIndex = {
             facetable: false,
             vectorSearchDimensions: 3072,
             vectorSearchProfileName: "hnsw_text_3_large"
-        } as SearchField,
+        },
         {
             name: "page_number",
             type: "Edm.Int32",
             filterable: true,
             sortable: true,
             facetable: true
-        } as SearchField
+        }
     ],
     vectorSearch: {
         profiles: [
@@ -79,26 +58,26 @@ const index: SearchIndex = {
                 name: "hnsw_text_3_large",
                 algorithmConfigurationName: "alg",
                 vectorizerName: "azure_openai_text_3_large"
-            } as VectorSearchProfile
+            }
         ],
         algorithms: [
             {
                 name: "alg",
                 kind: "hnsw"
-            } as HnswAlgorithmConfiguration
+            }
         ],
         vectorizers: [
             {
                 vectorizerName: "azure_openai_text_3_large",
                 kind: "azureOpenAI",
                 parameters: {
-                    resourceUrl: process.env.AZURE_OPENAI_ENDPOINT!,
-                    deploymentId: process.env.AZURE_OPENAI_EMBEDDING_DEPLOYMENT!,
-                    modelName: process.env.AZURE_OPENAI_EMBEDDING_DEPLOYMENT!
-                } as AzureOpenAIParameters
-            } as AzureOpenAIVectorizer
+                    resourceUrl: process.env.AZURE_OPENAI_ENDPOINT,
+                    deploymentId: process.env.AZURE_OPENAI_EMBEDDING_DEPLOYMENT,
+                    modelName: process.env.AZURE_OPENAI_EMBEDDING_DEPLOYMENT
+                }
+            }
         ]
-    } as VectorSearch,
+    },
     semanticSearch: {
         defaultConfigurationName: "semantic_config",
         configurations: [
@@ -106,18 +85,18 @@ const index: SearchIndex = {
                 name: "semantic_config",
                 prioritizedFields: {
                     contentFields: [
-                        { name: "page_chunk" } as SemanticField
+                        { name: "page_chunk" }
                     ]
-                } as SemanticPrioritizedFields
-            } as SemanticConfiguration
+                }
+            }
         ]
-    } as SemanticSearch
+    }
 };
 
 const credential = new DefaultAzureCredential();
 
-const searchIndexClient = new SearchIndexClient(process.env.AZURE_SEARCH_ENDPOINT!, credential);
-const searchClient = new SearchClient<EarthAtNightDocument>(process.env.AZURE_SEARCH_ENDPOINT!, 'earth_at_night', credential);
+const searchIndexClient = new SearchIndexClient(process.env.AZURE_SEARCH_ENDPOINT, credential);
+const searchClient = new SearchClient(process.env.AZURE_SEARCH_ENDPOINT, 'earth_at_night', credential);
 
 await searchIndexClient.createOrUpdateIndex(index);
 
@@ -127,33 +106,15 @@ const response = await fetch("https://raw.githubusercontent.com/Azure-Samples/az
 if (!response.ok) {
     throw new Error(`Failed to fetch documents: ${response.status} ${response.statusText}`);
 }
-const documents = await response.json() as any[];
+const documents = await response.json();
 
-const bufferedClient = new SearchIndexingBufferedSender<EarthAtNightDocument>(
+const bufferedClient = new SearchIndexingBufferedSender(
     searchClient,
     documentKeyRetriever,
     {
         autoFlush: true,
     },
 );
-
-bufferedClient.on("batchAdded", (batch: { action?: string; documents?: any[] }) => {
-    console.log(`Batch Added Event: action=${batch.action}, documents=${batch.documents?.length || 0}`);
-});
-
-bufferedClient.on("beforeDocumentSent", (response: IndexDocumentsAction<EarthAtNightDocument>) => {
-    console.log(`Before Document Sent Event: action=${response.__actionType}, id=${response.id}, page=${response.page_number}`);
-});
-
-bufferedClient.on("batchSucceeded", (response: IndexDocumentsResult) => {
-    console.log("Batch Succeeded Event has been receieved....");
-    console.log(`Successfully indexed ${response.results.length} documents`);
-});
-
-bufferedClient.on("batchFailed", (response:any) => {
-    console.log("Batch Failed Event has been receieved....");
-    console.log(response);
-});
 
 await bufferedClient.uploadDocuments(documents);
 await bufferedClient.flush();
@@ -200,20 +161,20 @@ await searchIndexClient.createKnowledgeBase({
         {
             kind: "azureOpenAI",
             azureOpenAIParameters: {
-                resourceUrl: process.env.AZURE_OPENAI_ENDPOINT!,
-                deploymentId: process.env.AZURE_OPENAI_GPT_DEPLOYMENT!,
-                modelName: process.env.AZURE_OPENAI_GPT_DEPLOYMENT!
+                resourceUrl: process.env.AZURE_OPENAI_ENDPOINT,
+                deploymentId: process.env.AZURE_OPENAI_GPT_DEPLOYMENT,
+                modelName: process.env.AZURE_OPENAI_GPT_DEPLOYMENT
             }
         }
     ],
-    outputMode: "answerSynthesis" as KnowledgeRetrievalOutputMode,
+    outputMode: "answerSynthesis",
     answerInstructions: "Provide a two sentence concise and informative answer based on the retrieved documents."
 });
 
 console.log(`✅ Knowledge base 'earth-knowledge-base' created successfully.`);
 
 const knowledgeRetrievalClient = new KnowledgeRetrievalClient(
-    process.env.AZURE_SEARCH_ENDPOINT!,
+    process.env.AZURE_SEARCH_ENDPOINT,
     'earth-knowledge-base',
     credential
 );
@@ -226,7 +187,7 @@ const retrievalRequest = {
             role: "user",
             content: [
                 {
-                    type: "text" as const,
+                    type: "text",
                     text: query1
                 }
             ]
@@ -234,7 +195,7 @@ const retrievalRequest = {
     ],
     knowledgeSourceParams: [
         {
-            kind: "searchIndex" as const,
+            kind: "searchIndex",
             knowledgeSourceName: 'earth-knowledge-source',
             includeReferences: true,
             includeReferenceSourceData: true,
@@ -243,7 +204,7 @@ const retrievalRequest = {
         }
     ],
     includeActivity: true,
-    retrievalReasoningEffort: { kind: "low" as const }
+    retrievalReasoningEffort: { kind: "low" }
 };
 
 const result = await knowledgeRetrievalClient.retrieveKnowledge(retrievalRequest);
@@ -289,7 +250,7 @@ const retrievalRequest2 = {
             role: "user",
             content: [
                 {
-                    type: "text" as const,
+                    type: "text",
                     text: query2
                 }
             ]
@@ -297,7 +258,7 @@ const retrievalRequest2 = {
     ],
     knowledgeSourceParams: [
         {
-            kind: "searchIndex" as const,
+            kind: "searchIndex",
             knowledgeSourceName: 'earth-knowledge-source',
             includeReferences: true,
             includeReferenceSourceData: true,
@@ -306,7 +267,7 @@ const retrievalRequest2 = {
         }
     ],
     includeActivity: true,
-    retrievalReasoningEffort: { kind: "low" as const }
+    retrievalReasoningEffort: { kind: "low" }
 };
 
 const result2 = await knowledgeRetrievalClient.retrieveKnowledge(retrievalRequest2);
