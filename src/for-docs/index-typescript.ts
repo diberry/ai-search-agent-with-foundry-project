@@ -308,6 +308,22 @@ if (result2.response && result2.response.length > 0) {
 }
 console.log("─".repeat(80));
 
+if (result2.activity) {
+    console.log("\nActivities:");
+    result2.activity.forEach((activity) => {
+        console.log(`Activity Type: ${activity.type}`);
+        console.log(JSON.stringify(activity, null, 2));
+    });
+}
+
+if (result2.references) {
+    console.log("\nReferences:");
+    result2.references.forEach((reference) => {
+        console.log(`Reference Type: ${reference.type}`);
+        console.log(JSON.stringify(reference, null, 2));
+    });
+}
+
 console.log("\n✅ Quickstart completed successfully!");
 
 // Clean up resources
